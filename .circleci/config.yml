@@ -209,6 +209,18 @@ commands:
             sudo apt-get install -y google-chrome-stable libxss1 --no-install-recommends
             sudo rm -rf /var/lib/apt/lists/*
 
+  apt-focal-install-aioeventlet:
+    steps:
+      - run:
+          <<: *appdir
+          command: |
+            # Install python3-aioeventlet from the magma apt repo
+            cat ${MAGMA_ROOT}/orc8r/tools/ansible/roles/pkgrepo/files/jfrog.pub | sudo apt-key add -
+            echo "deb https://facebookconnectivity.jfrog.io/artifactory/list/dev-focal/ focal main" | sudo tee /etc/apt/sources.list.d/fbc.list
+            sudo apt-get update -y
+            sudo apt-get install -y python3-aioeventlet
+            sudo rm -rf /var/lib/apt/lists/*
+
 
   tag-push-docker:
     description: Tag docker image and push it
@@ -283,37 +295,80 @@ commands:
               tag_and_push "latest"
             fi
             if [ "$TAG_RELEASE" = true ]; then
-              tag_and_push "1.6.0"
+              tag_and_push "1.6.1"
             fi
           done
 
-  sentry-upload:
-    description: Upload debug artifacts for an executable to Sentry.io
+  sentry-create-artifacts:
     parameters:
       executable_name:
         description: Name of executable that should be pushed to sentry
         type: string
     steps:
-      - run: |
-          # The assumption here is that packages.tar.gz was tarred in
-          # $MAGMA_ROOT/circleci in the magma_integ_test step
-          cd circleci/executables
+      - run:
+          name: Create debug artifacts to be uploaded to Sentry.io
+          command: |
+            # The assumption here is that packages.tar.gz was copied out and untarred
+            # in $MAGMA_ROOT/circleci in the magma_integ_test step
+            cd circleci/executables
 
-          SENTRY_ORG="lf-9c"
-          NATIVE_PROJECT="lab-agws-native"
-          EXEC="<< parameters.executable_name >>"
-          objcopy --only-keep-debug "$EXEC" "$EXEC".debug
-          objcopy --strip-debug --strip-unneeded "$EXEC"
-          objcopy --add-gnu-debuglink="$EXEC".debug "$EXEC"
+            EXEC="<< parameters.executable_name >>"
+            objcopy --only-keep-debug "$EXEC" "$EXEC".debug
+            objcopy --strip-debug --strip-unneeded "$EXEC"
+            objcopy --add-gnu-debuglink="$EXEC".debug "$EXEC"
 
-          # [Optional] Log included debug information
-          sentry-cli difutil check "$EXEC"
-          sentry-cli difutil check "$EXEC".debug
+  sentry-upload:
+    parameters:
+      executable_name:
+        description: Name of executable that should be pushed to sentry
+        type: string
+      project:
+        description: Name of Sentry project that the symbols should be uploaded to
+        type: string
+      org:
+        description: Name of Sentry organization that the symbols should be uploaded to
+        type: string
+    steps:
+      - run:
+          name: Upload debug artifacts for an executable to Sentry.io
+          command: |
+            # The assumption here is that debug artifacts already exist for this executable
+            # This should be true if sentry-create-artifacts was run before this
+            cd circleci/executables
 
-          # Upload the debug artifact with `symtab`, `debug`, and `sources`
-          sentry-cli upload-dif --log-level=info --org="$SENTRY_ORG" --project="$NATIVE_PROJECT" --include-sources  "$EXEC".debug
-          # Upload the stripped executable with `unwind`
-          sentry-cli upload-dif --log-level=info --org="$SENTRY_ORG" --project="$NATIVE_PROJECT" "$EXEC"
+            SENTRY_ORG="<< parameters.org >>"
+            NATIVE_PROJECT="<< parameters.project >>"
+            EXEC="<< parameters.executable_name >>"
+
+            # [Optional] Log included debug information
+            sentry-cli difutil check "$EXEC"
+            sentry-cli difutil check "$EXEC".debug
+
+            # Upload the debug artifact with `symtab`, `debug`, and `sources`
+            sentry-cli upload-dif --log-level=info --org="$SENTRY_ORG" --project="$NATIVE_PROJECT" --include-sources  "$EXEC".debug
+            # Upload the stripped executable with `unwind`
+            sentry-cli upload-dif --log-level=info --org="$SENTRY_ORG" --project="$NATIVE_PROJECT" "$EXEC"
+
+  sentry-create-and-upload-artifacts:
+    parameters:
+      executable_name:
+        description: Name of executable that should be pushed to sentry
+        type: string
+    steps:
+      - sentry-create-artifacts:
+          executable_name: << parameters.executable_name >>
+      - sentry-upload:
+          executable_name: << parameters.executable_name >>
+          project: lab-agws-native
+          org: lf-9c
+      - sentry-upload:
+          executable_name: << parameters.executable_name >>
+          project: radtonics_lab_native
+          org: lf-9c
+      - sentry-upload:
+          executable_name: << parameters.executable_name >>
+          project: magma-staging
+          org: lf-9c
 
   sentry-release:
     steps:
@@ -323,18 +378,15 @@ commands:
           command: |
             echo export SENTRY_ENVIRONMENT="staging" >> $BASH_ENV
             echo export SENTRY_ORG="lf-9c" >> $BASH_ENV
-      - run: |
-          cd circleci/executables
-          ls
-      - sentry-upload:
+      - sentry-create-and-upload-artifacts:
           executable_name: sessiond
-      - sentry-upload:
+      - sentry-create-and-upload-artifacts:
           executable_name: mme
       - run:
           name: Create a release in Sentry.io with the commit hash
           command: |
-            COMMIT_HASH_WITH_VERSION="1.6.0-${CIRCLE_SHA1:0:8}"
-            sentry-cli --log-level=info releases new -p lab-agws-python -p lab-agws-native ${COMMIT_HASH_WITH_VERSION}
+            COMMIT_HASH_WITH_VERSION="1.6.1-${CIRCLE_SHA1:0:8}"
+            sentry-cli --log-level=info releases new -p lab-agws-python -p lab-agws-native -p radtonics_lab_native -p magma-staging ${COMMIT_HASH_WITH_VERSION}
             sentry-cli --log-level=info releases set-commits --auto --ignore-missing ${COMMIT_HASH_WITH_VERSION}
             sentry-cli --log-level=info releases finalize ${COMMIT_HASH_WITH_VERSION}
 
@@ -398,6 +450,11 @@ commands:
             cp *_version versions || true
           no_output_timeout: 20m
       - run:
+          name: Do not trust expired cert distributed by default
+          command: |
+            sudo sed -i  's,mozilla/DST_Root_CA_X3.crt,!mozilla/DST_Root_CA_X3.crt,' /etc/ca-certificates.conf
+            sudo update-ca-certificates
+      - run:
           name: Copy debian packages to new JFROG repo
           command: |
             cd ${MAGMA_ROOT}/circleci
@@ -409,7 +466,7 @@ commands:
                for i in `ls -a1 *.deb`
                do
                   echo "Pushing package $i to JFROG artifiactory: ${JFROG_DEBIANLOCAL_REGISTRY}"
-                  curl -uci-bot:${JFROG_CIBOT_APIKEYS} -XPUT "${JFROG_DEBIANLOCAL_REGISTRY}/focal-1.6.0/$i;deb.distribution=focal-1.6.0;deb.component=main;deb.architecture=amd64" -T $i
+                  curl -uci-bot:${JFROG_CIBOT_APIKEYS} -XPUT "${JFROG_DEBIANLOCAL_REGISTRY}/focal-1.6.1/$i;deb.distribution=focal-1.6.1;deb.component=main;deb.architecture=amd64" -T $i
                done
             else
                echo "${PACKAGE_FILE} does NOT exist"
@@ -1137,7 +1194,7 @@ jobs:
 
   lte-test:
     machine:
-      image: ubuntu-1604:201903-01
+      image: ubuntu-2004:202104-01
     environment:
       MAGMA_ROOT: /home/circleci/project
       PYTHON_BUILD: ${MAGMA_ROOT}/build
@@ -1148,23 +1205,24 @@ jobs:
       SWAGGER_CODEGEN_JAR: /home/circleci/project/.codegen/swagger-codegen-cli.jar
     steps:
       - checkout
-      - python/set_version
+      - run: pyenv install 3.8.5
+      - python/set_version:
+          python_version: "3.8.5"
       - build/determinator:
           <<: *lte_build_verify
+      - apt-focal-install-aioeventlet
       - run: mkdir -p /var/tmp/test_results
       - run: mkdir -p /var/tmp/codecovs
       - run: sudo apt-get update -y
-      - run: sudo apt-get install -y libsystemd-dev pkg-config curl zip unzip
-      - run: sudo apt-get install -y virtualenv python-babel python-dev build-essential autogen autoconf libtool python3-apt python3-aioeventlet python3-requests python3-pip python-protobuf
+      - run: sudo apt-get install -y libsystemd-dev pkg-config curl zip unzip net-tools
+      - run: sudo apt-get install -y virtualenv python-babel python-dev build-essential autogen autoconf libtool python3-apt python3-requests python3-pip python-protobuf
       - run: pip3 install setuptools==49.6.0
       - run:
           command: |
-            sudo curl -Lfs https://github.com/google/protobuf/releases/download/v3.1.0/protoc-3.1.0-linux-x86_64.zip -o protoc3.zip
+            sudo curl -Lfs https://github.com/protocolbuffers/protobuf/releases/download/v3.1.0/protoc-3.1.0-linux-x86_64.zip -o protoc3.zip
             sudo unzip protoc3.zip -d protoc3
             sudo mv protoc3/bin/protoc /bin/protoc
             sudo chmod a+rx /bin/protoc
-            sudo mv protoc3/include/google /usr/include/
-            sudo chmod -R a+Xr /usr/include/google
             sudo rm -rf protoc3.zip protoc3
             mkdir ${CODEGEN_ROOT}
             wget https://repo1.maven.org/maven2/io/swagger/swagger-codegen-cli/2.2.3/swagger-codegen-cli-2.2.3.jar -O $SWAGGER_CODEGEN_JAR
@@ -1602,14 +1660,10 @@ workflows:
     jobs:
       - insync-checkin
       - deploy-sync-checkin
-      - cloud_lint
-      - cloud-test
       - orc8r-build:
           requires:
             - insync-checkin
             - deploy-sync-checkin
-            - cloud_lint
-            - cloud-test
 
   lib_gateway:
     jobs:

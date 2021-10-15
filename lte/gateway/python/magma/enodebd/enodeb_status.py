@@ -494,6 +494,9 @@ def _get_gps_status_as_bool(enodeb: EnodebAcsStateMachine) -> bool:
             return False
         else:
             param = enodeb.get_parameter(ParameterName.GPS_STATUS)
+            if isinstance(param, bool):
+                # No translation to do.
+                return param
             stripped_value = param.lower().strip()
             if stripped_value == '0' or stripped_value == '2':
                 # 2 = GPS locking
@@ -552,7 +555,7 @@ def _get_cached_gps_coords() -> Tuple[str, str]:
 
 def _read_gps_coords_from_file():
     try:
-        with open(CACHED_GPS_COORD_FILE_PATH) as f:
+        with open(CACHED_GPS_COORD_FILE_PATH, encoding="utf-8") as f:
             lines = f.readlines()
             if len(lines) != 2:
                 logger.warning(

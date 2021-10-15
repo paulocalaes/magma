@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#include "assertions.h"
 #include "bstrlib.h"
 #include "log.h"
 #include "intertask_interface.h"
@@ -40,6 +41,7 @@
 #include "mme_app_defs.h"
 #include "mme_app_ha.h"
 #include "mme_app_statistics.h"
+#include "mme_app_mme_ue_id_timer.h"
 #include "service303_message_utils.h"
 #include "common_defs.h"
 #include "mme_app_edns_emulation.h"
@@ -73,6 +75,7 @@ static int handle_message(zloop_t* loop, zsock_t* reader, void* arg) {
   mme_app_desc_t* mme_app_desc_p = get_mme_nas_state(false);
 
   bool is_task_state_same = false;
+  bool force_ue_write     = false;
 
   mme_app_last_msg_latency =
       ITTI_MSG_LATENCY(received_message_p);  // microseconds
@@ -108,6 +111,7 @@ static int handle_message(zloop_t* loop, zsock_t* reader, void* arg) {
           MME_APP_UL_DATA_IND(received_message_p).tai,
           MME_APP_UL_DATA_IND(received_message_p).cgi,
           &MME_APP_UL_DATA_IND(received_message_p).nas_msg);
+      force_ue_write     = true;
       is_task_state_same = true;
     } break;
 
@@ -179,6 +183,7 @@ static int handle_message(zloop_t* loop, zsock_t* reader, void* arg) {
           ue_context_p->ue_context_rel_cause = S1AP_INVALID_CAUSE;
           mme_app_handle_ue_offload(ue_context_p);
         }
+        force_ue_write = true;
       }
     } break;
 
@@ -500,7 +505,7 @@ static int handle_message(zloop_t* loop, zsock_t* reader, void* arg) {
     } break;
   }
 
-  put_mme_ue_state(mme_app_desc_p, imsi64);
+  put_mme_ue_state(mme_app_desc_p, imsi64, force_ue_write);
 
   if (!is_task_state_same) {
     put_mme_nas_state();
@@ -525,7 +530,8 @@ static void* mme_app_thread(__attribute__((unused)) void* args) {
   start_stats_timer();
 
   zloop_start(mme_app_task_zmq_ctx.event_loop);
-  mme_app_exit();
+  AssertFatal(
+      0, "Asserting as mme_app_thread should not be exiting on its own!");
   return NULL;
 }
 
@@ -572,8 +578,10 @@ int mme_app_init(const mme_config_t* mme_config_p) {
 static int handle_stats_timer(zloop_t* loop, int id, void* arg) {
   mme_app_desc_t* mme_app_desc_p = get_mme_nas_state(false);
   application_mme_app_stats_msg_t stats_msg;
-  stats_msg.nb_ue_attached  = mme_app_desc_p->nb_ue_attached;
-  stats_msg.nb_ue_connected = mme_app_desc_p->nb_ue_connected;
+  stats_msg.nb_ue_attached         = mme_app_desc_p->nb_ue_attached;
+  stats_msg.nb_ue_connected        = mme_app_desc_p->nb_ue_connected;
+  stats_msg.nb_default_eps_bearers = mme_app_desc_p->nb_default_eps_bearers;
+  stats_msg.nb_s1u_bearers         = mme_app_desc_p->nb_s1u_bearers;
   return send_mme_app_stats_to_service303(
       &mme_app_task_zmq_ctx, TASK_MME_APP, &stats_msg);
 }

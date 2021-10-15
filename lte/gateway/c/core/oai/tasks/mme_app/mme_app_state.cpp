@@ -18,6 +18,7 @@
 #include "mme_app_state.h"
 #include "mme_app_state_manager.h"
 #include "mme_app_ip_imsi.h"
+#include "mme_app_mme_ue_id_timer.h"
 
 using magma::lte::MmeNasStateManager;
 
@@ -28,6 +29,7 @@ using magma::lte::MmeNasStateManager;
  */
 int mme_nas_state_init(const mme_config_t* mme_config_p) {
   initialize_ipv4_map();
+  initialize_mme_ue_id_timer_id_set();
   return MmeNasStateManager::getInstance().initialize_state(mme_config_p);
 }
 
@@ -54,6 +56,7 @@ void put_mme_nas_state() {
  * state persisted in data store
  */
 void clear_mme_nas_state() {
+  clear_mme_ue_id_timer_id_set();
   MmeNasStateManager::getInstance().free_state();
 }
 
@@ -61,13 +64,17 @@ hash_table_ts_t* get_mme_ue_state() {
   return MmeNasStateManager::getInstance().get_ue_state_ht();
 }
 
-void put_mme_ue_state(mme_app_desc_t* mme_app_desc_p, imsi64_t imsi64) {
+void put_mme_ue_state(
+    mme_app_desc_t* mme_app_desc_p, imsi64_t imsi64, bool force_ue_write) {
   if (MmeNasStateManager::getInstance().is_persist_state_enabled()) {
     if (imsi64 != INVALID_IMSI64) {
       ue_mm_context_t* ue_context = nullptr;
       ue_context =
           mme_ue_context_exists_imsi(&mme_app_desc_p->mme_ue_contexts, imsi64);
-      if (ue_context && ue_context->mm_state == UE_REGISTERED) {
+      // Only write MME UE state to redis if force flag is set or UE is in EMM
+      // Registered state
+      if ((ue_context && force_ue_write) ||
+          (ue_context && ue_context->mm_state == UE_REGISTERED)) {
         auto imsi_str = MmeNasStateManager::getInstance().get_imsi_str(imsi64);
         MmeNasStateManager::getInstance().write_ue_state_to_db(
             ue_context, imsi_str);

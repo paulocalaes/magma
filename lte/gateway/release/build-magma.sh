@@ -20,8 +20,8 @@ SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 
 # Please update the version number accordingly for beta/stable builds
 # Test builds are versioned automatically by fabfile.py
-VERSION=1.6.0 # magma version number
-SCTPD_MIN_VERSION=1.6.0 # earliest version of sctpd with which this version is compatible
+VERSION=1.6.1 # magma version number
+SCTPD_MIN_VERSION=1.6.1 # earliest version of sctpd with which this version is compatible
 
 # RelWithDebInfo or Debug
 BUILD_TYPE=Debug
@@ -183,10 +183,10 @@ if [[ "$OS" == "debian" ]]; then
 else
     OVS_DEPS=(
         "magma-libfluid >= 0.1.0.6"
-        "libopenvswitch >= 2.14.3-7"
-        "openvswitch-switch >= 2.14.3-7"
-        "openvswitch-common >= 2.14.3-7"
-        "openvswitch-datapath-dkms >= 2.14.3-7"
+        "libopenvswitch >= 2.15.2-5"
+        "openvswitch-switch >= 2.15.2-5"
+        "openvswitch-common >= 2.15.2-5"
+        "openvswitch-datapath-dkms >= 2.15.2-5"
         )
 fi
 
@@ -422,6 +422,7 @@ ${MAGMA_ROOT}/lte/gateway/release/stretch_snapshot=/usr/local/share/magma/ \
 ${MAGMA_ROOT}/orc8r/tools/ansible/roles/fluent_bit/files/60-fluent-bit.conf=/etc/rsyslog.d/60-fluent-bit.conf \
 ${ANSIBLE_FILES}/set_irq_affinity=/usr/local/bin/ \
 ${ANSIBLE_FILES}/ovs-kmod-upgrade.sh=/usr/local/bin/ \
+${ANSIBLE_FILES}/magma-bridge-reset.sh=/usr/local/bin/ \
 ${PY_PROTOS}=${PY_DEST} \
 $(glob_files "${PY_TMP_BUILD}/${PY_TMP_BUILD_SUFFIX}/${PKGNAME}*" ${PY_DEST}) \
 $(glob_files "${PY_TMP_BUILD}/${PY_TMP_BUILD_SUFFIX}/*.egg-info" ${PY_DEST}) \

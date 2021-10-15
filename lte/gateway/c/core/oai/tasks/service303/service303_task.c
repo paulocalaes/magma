@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 
+#include "assertions.h"
 #include "log.h"
 #include "intertask_interface.h"
 #include "common_defs.h"
@@ -33,6 +34,9 @@ static void service303_message_exit(void);
 
 task_zmq_ctx_t service303_server_task_zmq_ctx;
 task_zmq_ctx_t service303_message_task_zmq_ctx;
+static long display_stats_timer_id;
+static int handle_display_timer(zloop_t*, int, void*);
+static void start_display_stats_timer(void);
 
 static int handle_service303_server_message(
     zloop_t* loop, zsock_t* reader, void* arg) {
@@ -67,7 +71,10 @@ static void* service303_server_thread(__attribute__((unused)) void* args) {
       handle_service303_server_message, &service303_server_task_zmq_ctx);
 
   zloop_start(service303_server_task_zmq_ctx.event_loop);
-  service303_server_exit();
+  AssertFatal(
+      0,
+      "Asserting as service303_server_thread should not be exiting on its "
+      "own!");
   return NULL;
 }
 
@@ -109,9 +116,10 @@ static void* service303_thread(void* args) {
   init_task_context(
       TASK_SERVICE303, (task_id_t[]){}, 0, handle_service_message,
       &service303_message_task_zmq_ctx);
-
+  start_display_stats_timer();
   zloop_start(service303_message_task_zmq_ctx.event_loop);
-  service303_message_exit();
+  AssertFatal(
+      0, "Asserting as service303_thread should not be exiting on its own!");
   return NULL;
 }
 
@@ -145,7 +153,19 @@ static void service303_server_exit(void) {
 }
 
 static void service303_message_exit(void) {
+  stop_timer(&service303_message_task_zmq_ctx, display_stats_timer_id);
   destroy_task_context(&service303_message_task_zmq_ctx);
   OAI_FPRINTF_INFO("TASK_SERVICE303 terminated\n");
   pthread_exit(NULL);
+}
+
+static int handle_display_timer(zloop_t* loop, int id, void* arg) {
+  service303_statistics_display();
+  return 0;
+}
+
+static void start_display_stats_timer(void) {
+  display_stats_timer_id = start_timer(
+      &service303_message_task_zmq_ctx, EPC_STATS_DISPLAY_TIMER_MSEC,
+      TIMER_REPEAT_FOREVER, handle_display_timer, NULL);
 }

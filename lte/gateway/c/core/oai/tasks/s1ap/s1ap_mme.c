@@ -219,10 +219,11 @@ static int handle_message(zloop_t* loop, zsock_t* reader, void* arg) {
     } break;
 
     case MME_APP_CONNECTION_ESTABLISHMENT_CNF: {
-      is_task_state_same = true;  // the following handler does not modify state
-      is_ue_state_same   = true;
+      is_task_state_same = false;
+      is_ue_state_same   = false;
       s1ap_handle_conn_est_cnf(
-          state, &MME_APP_CONNECTION_ESTABLISHMENT_CNF(received_message_p));
+          state, &MME_APP_CONNECTION_ESTABLISHMENT_CNF(received_message_p),
+          imsi64);
     } break;
 
     case MME_APP_S1AP_MME_UE_ID_NOTIFICATION: {
@@ -374,7 +375,8 @@ static void* s1ap_mme_thread(__attribute__((unused)) void* args) {
   start_stats_timer();
 
   zloop_start(s1ap_task_zmq_ctx.event_loop);
-  s1ap_mme_exit();
+  AssertFatal(
+      0, "Asserting as s1ap_mme_thread should not be exiting on its own!");
   return NULL;
 }
 

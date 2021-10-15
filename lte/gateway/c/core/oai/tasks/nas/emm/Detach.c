@@ -136,7 +136,21 @@ void detach_t3422_handler(void* args, imsi64_t* imsi64) {
   OAILOG_FUNC_OUT(LOG_NAS_EMM);
 }
 
-void _clear_emm_ctxt(emm_context_t* emm_context) {
+status_code_e release_esm_pdn_context(
+    emm_context_t* emm_context, mme_ue_s1ap_id_t ue_id) {
+  OAILOG_FUNC_IN(LOG_NAS_EMM);
+  esm_sap_t esm_sap = {0};
+  esm_sap.primitive = ESM_EPS_BEARER_CONTEXT_DEACTIVATE_REQ;
+  esm_sap.ue_id     = ue_id;
+  esm_sap.ctx       = emm_context;
+  esm_sap.data.eps_bearer_context_deactivate.ebi[0] = ESM_SAP_ALL_EBI;
+  esm_sap.data.eps_bearer_context_deactivate.is_pcrf_initiated = false;
+
+  status_code_e rc = esm_sap_send(&esm_sap);
+  OAILOG_FUNC_RETURN(LOG_NAS_EMM, rc);
+}
+
+void clear_emm_ctxt(emm_context_t* emm_context) {
   OAILOG_FUNC_IN(LOG_NAS_EMM);
   if (!emm_context) {
     return;
@@ -148,18 +162,6 @@ void _clear_emm_ctxt(emm_context_t* emm_context) {
   nas_delete_all_emm_procedures(emm_context);
   // Stop T3489 timer
   free_esm_context_content(&emm_context->esm_ctx);
-  esm_sap_t esm_sap = {0};
-  /*
-   * Release ESM PDN and bearer context
-   */
-
-  esm_sap.primitive = ESM_EPS_BEARER_CONTEXT_DEACTIVATE_REQ;
-  esm_sap.ue_id     = ue_id;
-  esm_sap.ctx       = emm_context;
-  esm_sap.data.eps_bearer_context_deactivate.ebi[0] = ESM_SAP_ALL_EBI;
-  esm_sap.data.eps_bearer_context_deactivate.is_pcrf_initiated = false;
-
-  esm_sap_send(&esm_sap);
 
   if (emm_context->esm_msg) {
     bdestroy(emm_context->esm_msg);
@@ -177,6 +179,7 @@ void _clear_emm_ctxt(emm_context_t* emm_context) {
   emm_ctx_clear_auth_vectors(emm_context);
   emm_ctx_clear_security(emm_context);
   emm_ctx_clear_non_current_security(emm_context);
+  OAILOG_FUNC_OUT(LOG_NAS_EMM);
 }
 
 /*
@@ -451,7 +454,8 @@ int emm_proc_detach_accept(mme_ue_s1ap_id_t ue_id) {
         emm_ctx->T3422.id, ue_id);
     void* unused          = NULL;
     void** timer_callback = &unused;
-    emm_ctx->T3422.id     = nas_timer_stop(emm_ctx->T3422.id, timer_callback);
+    emm_ctx->T3422.id =
+        nas_timer_stop(emm_ctx->T3422.id, timer_callback, ue_id);
     if (emm_ctx->t3422_arg) {
       free_wrapper(&emm_ctx->t3422_arg);
       emm_ctx->t3422_arg = NULL;
@@ -543,10 +547,11 @@ int emm_proc_nw_initiated_detach_request(
        */
       void* unused          = NULL;
       void** timer_callback = &unused;
-      emm_ctx->T3422.id     = nas_timer_stop(emm_ctx->T3422.id, timer_callback);
+      emm_ctx->T3422.id =
+          nas_timer_stop(emm_ctx->T3422.id, timer_callback, ue_id);
       nw_detach_data_t* data = (nw_detach_data_t*) emm_ctx->t3422_arg;
       emm_ctx->T3422.id      = nas_timer_start(
-          emm_ctx->T3422.sec, 0, detach_t3422_handler, (void*) data);
+          emm_ctx->T3422.sec, 0, detach_t3422_handler, (void*) data, ue_id);
     } else {
       /*
        * Start T3422 timer
@@ -554,7 +559,7 @@ int emm_proc_nw_initiated_detach_request(
       if (emm_ctx->t3422_arg) {
         emm_ctx->T3422.id = nas_timer_start(
             emm_ctx->T3422.sec, 0, detach_t3422_handler,
-            (void*) emm_ctx->t3422_arg);
+            (void*) emm_ctx->t3422_arg, ue_id);
       } else {
         nw_detach_data_t* data =
             (nw_detach_data_t*) calloc(1, sizeof(nw_detach_data_t));
@@ -570,7 +575,7 @@ int emm_proc_nw_initiated_detach_request(
         data->retransmission_count = 0;
         data->detach_type          = detach_type;
         emm_ctx->T3422.id          = nas_timer_start(
-            emm_ctx->T3422.sec, 0, detach_t3422_handler, (void*) data);
+            emm_ctx->T3422.sec, 0, detach_t3422_handler, (void*) data, ue_id);
         emm_ctx->t3422_arg = (void*) data;
       }
     }
